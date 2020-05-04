@@ -16,7 +16,7 @@ if [[ "$(ps -o comm= -p $PPID)" != "ssh" ]]; then
   exit 0
 fi
 
-[[ "$1" =~ ^(i|mi)-([0-9a-f]{8,})$ ]] && iid="$1" ||iid=$(python3 ~/bin/ssm-tool.py --iid --tag Name:"${1}")
+[[ "$1" =~ ^(i|mi)-([0-9a-f]{8,})$ ]] && iid="$1" || exit 1
 [[ $? -ne 0 ]] && printf "  ERROR: could not determine instance-id with provided argument!\n" && exit 1
 
 function cleanup {
