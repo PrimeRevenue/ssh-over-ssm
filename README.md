@@ -1,6 +1,69 @@
 
 # ssh-over-ssm
-Configure SSH and use AWS SSM to connect to instances. Consider git-managing your configs for quick setup and keeping users up-to-date and in sync.
+Configure SSH and use AWS SSM to connect to instances. Require git-managing your configs for quick setup and keeping users up-to-date and in sync.
+
+## Main Changes from Original
+
+The original branch from elpy1 is a brilliant take on leveraging SSM to connect securely over SSH. Here at Prime Revenue, we wanted to expand on it to control all end user ssh access to both AWS hosts and legecy, On-Premise hosts. With such a broader scope, we made the following modifcations:
+
+- First, we wanted to only use this ssh-over-ssm project to allow end user ssh access to servers using SSM and only for shell access to servers. With full access to SSM, end users would have far more access to the system than needed. And with how this works as an SSH proxy command, end users would be able to change the SendCommand using the general "Run Command" in their `~/bin/ssh-ssm.sh` to whatever they want since that is within the user's home directory. In the spirit of least amount of privilege neccassary, we create an SSM document that mimics the original branch's SendCommand, and then give the end user only access to that SSM document. When calling the proxy command, it uses that custom document instead of the general "Run Command" document with contents that could easily be changed by the end user. 
+- Second, we also wanted to use this to connect to on-premise hosts. Since the shell script of the Proxy Command only expects EC2 hosts that start with `i-*`, we made it check for both `i-*` and `mi-*` so it also checks for our registered on-premise hosts.
+- Third, we decided to go with a well organzied github for the ssh configs with no support for the python script. The python command is used for two things: updating the SSM agent and trying to the instance ID when it doesn't match the regex in the Proxy Command. Only admins need to be able to update SSM agents, so it is a good thing that not everyone have access to that fucntionality in our use case. In the original branch during the Proxy Command, the python script is called when a hostname is passed to the proxy command script that does not match an instance ID. This python script lookups to see if there is an instance ID with that name. For the scope of which we want to use project, it would be too much to also keep up with every user's python environment. To make it less complicated rollout with less requirements for support, we will fail the script if it is called with a hostname that doesn't begin with `i-*` or `mi-*` because we will just keep up with the ssh configs in a seperate repository. 
+- Forth, some of the timeouts have been increased slightly. During testing of this branch, timeouts were encountered with on-premise testing at the original branch's default values.  
+
+##Prerequisite:
+
+- A custom SSM document that only takes in the needed paraters for uploading the public key. Here is an example cloudformation
+```
+Description: >
+  Document for creating temporary keys for ssh access using SSM
+
+Parameters:
+  DocumentName:
+    Description: Name of the SSH SSM Document
+    Type: String
+    Default: SSHSSM
+
+Resources:
+  SSHSSMDocument:
+    Type: AWS::SSM::Document
+    Properties:
+      Name: !Ref DocumentName
+      DocumentType: Command
+      Content:
+        schemaVersion: '2.2'
+        description: State Manager Bootstrap Example
+        parameters:
+          USER:
+            type: "String"
+            description: "ssh user"
+          AUTHKEYS:
+            type: "String"
+            description: "authorized key"
+            default: ".ssh/authorized_keys"
+          PUBKEY:
+            type: "String"
+            description: "pub key to publish"
+        mainSteps:
+          - action: "aws:runShellScript"
+            name: "example"
+            inputs:
+              runCommand:
+              - "u=`getent passwd {{ USER }}` && x=`echo $u |cut -d: -f6` || exit 1"
+              - "grep '{{ PUBKEY }}' $x/{{ AUTHKEYS }} && exit 1"
+              - "printf '{{ PUBKEY }}' | tee -a $x/{{ AUTHKEYS }} && sleep 20"
+              - "sed -i s,'{{ PUBKEY }}',, $x/{{ AUTHKEYS }}"
+
+Outputs:
+  SSHSSMDocumentOutput:
+    Description: SSM Document Resource
+    Value: !Ref SSHSSMDocument
+```
+
+- The end user must have permission to the document along with start session. This is a really useful reference for IAM permissions:
+https://iam.cloudonaut.io/
+
+Following is the original README with some edits to the timeouts plus removing parts about the python script. 
 
 ## Info and requirements
 Recently I was required to administer AWS instances via Session Manager. After downloading the required plugin and initiating a SSM session locally using `aws ssm start-session` I found myself in a situation where I couldn't easily copy a file from my machine to the server (e.g. SCP, sftp, rsync etc). After some reading of AWS documentation I found it's possible to connect via SSH over SSM, solving this issue. You also get all the other benefits and functionality of SSH e.g. encryption, proxy jumping, port forwarding, socks etc.
@@ -27,47 +90,6 @@ If your key is available via ssh-agent it will be used by the script, otherwise 
 
 ## Installation and Usage
 This tool is intended to be used in conjunction with `ssh`. It requires that you've configured your awscli (`~/.aws/{config,credentials}`) properly and you spend a small amount of time planning and updating your ssh config.
-
-### Listing and updating SSM instances
-First, we need to make sure the agent on each of our instances is up-to-date. You can use `aws ssm describe-instance-information` to list instances and `aws ssm send-command` to update them. Alternatively, I've included a small python script to quickly list or update your instances:
-
-Check your instances
-```
-[elpy@testbox ~]$ AWS_PROFILE=int-monitor1 python3 ssm-tool.py
-instance id           |ip                    |agent up-to-date      |platform              |name
-------------------------------------------------------------------------------------------------------------------
-i-0xxxxxxxxxxxxx3b4   |10.xx.xx.6            |False                 |Ubuntu                |instance1
-i-0xxxxxxxxxxxxx76e   |10.xx.xx.142          |False                 |Ubuntu                |instance2
-i-0xxxxxxxxxxxxx1b6   |10.xx.xx.75           |False                 |Ubuntu                |instance3
-i-0xxxxxxxxxxxxxac8   |10.xx.xx.240          |False                 |Ubuntu                |instance4
-i-0xxxxxxxxxxxxxb1a   |10.xx.xx.206          |False                 |Ubuntu                |instance5
-i-0xxxxxxxxxxxxx504   |10.xx.xx.84           |False                 |Amazon Linux          |
-i-0xxxxxxxxxxxxx73d   |10.xx.xx.48           |False                 |Ubuntu                |instance6
-i-0xxxxxxxxxxxxxd56   |10.xx.xx.201          |False                 |Ubuntu                |instance7
-i-0xxxxxxxxxxxxxfe9   |10.xx.xx.143          |False                 |CentOS Linux          |instance8
-i-0xxxxxxxxxxxxxb8e   |10.xx.xx.195          |False                 |Ubuntu                |instance9
-
-```
-
-Update all instances
-```
-[elpy@testbox ~]$ AWS_PROFILE=int-monitor1 python3 ssm-tool.py --update
-success
-
-[elpy@testbox ~]$ AWS_PROFILE=int-monitor1 python3 ssm-tool.py
-instance id           |ip                    |agent up-to-date      |platform              |name
-------------------------------------------------------------------------------------------------------------------
-i-0xxxxxxxxxxxxx3b4   |10.xx.xx.6            |True                 |Ubuntu                |instance1
-i-0xxxxxxxxxxxxx76e   |10.xx.xx.142          |True                 |Ubuntu                |instance2
-i-0xxxxxxxxxxxxx1b6   |10.xx.xx.75           |True                 |Ubuntu                |instance3
-i-0xxxxxxxxxxxxxac8   |10.xx.xx.240          |True                 |Ubuntu                |instance4
-i-0xxxxxxxxxxxxxb1a   |10.xx.xx.206          |True                 |Ubuntu                |instance5
-i-0xxxxxxxxxxxxx504   |10.xx.xx.84           |True                 |Amazon Linux          |
-i-0xxxxxxxxxxxxx73d   |10.xx.xx.48           |True                 |Ubuntu                |instance6
-i-0xxxxxxxxxxxxxd56   |10.xx.xx.201          |True                 |Ubuntu                |instance7
-i-0xxxxxxxxxxxxxfe9   |10.xx.xx.143          |True                 |CentOS Linux          |instance8
-i-0xxxxxxxxxxxxxb8e   |10.xx.xx.195          |True                 |Ubuntu                |instance9
-```
 
 ### SSH config
 
@@ -106,7 +128,7 @@ Host *
   KeepAlive yes
   Protocol 2
   ServerAliveInterval 30
-  ConnectTimeout 10
+  ConnectTimeout 30
 
 Match exec "find ~/.ssh/conf.d -type f -name '*_ssm' -exec grep '%h' {} +"
   IdentityFile ~/.ssh/ssm-ssh-tmp
@@ -197,44 +219,7 @@ LISTEN     0      128       127.0.0.1:postgres                        *:*       
 Password:
 ```
 
-### But I don't like configuring things!
-So, it appears there are ~~monsters~~ people out there who don't like the idea of managing config files, and that's fine. The reason for making this section is to provide some examples of how you can configure and work with `ssh` to hopefully achieve the minimal configuration dream. I have made some amendments to the python script included with `ssh-ssm.sh` and renamed it to `ssm-tool.py` to cater for this. It is required that both scripts are placed in `~/bin/`.
-
-**Note**: The changes made to `ssh-ssm.sh` should not affect existing script functionality.
-
-Goals:
-- Can ssh into our instance using `Name` tag `Value`
-- Can ssh into our instance using `InstanceId`
-- We want minimal or zero pre-configuration required
-
-To achieve this we can either execute `ssh-ssm.sh` directly using either the instance `Name` value or `InstanceId`:
-```
-[elpy@testbox ~]$ AWS_PROFILE=home python3 ~/bin/ssm-tool.py --linux --tag Name:jenkins*
-instance id           |ip                    |agent up-to-date      |platform              |names
-------------------------------------------------------------------------------------------------------------------
-i-0xxxxxxxxxxxxx67a   |10.xx.x.x53           |True                  |CentOS Linux          |jenkins-dev-slave-autoscale01
-i-0xxxxxxxxxxxxxfe9   |10.xx.x.x43           |True                  |CentOS Linux          |jenkins-dev-master-autoscale01
-
-[elpy@testbox ~]$ AWS_PROFILE=home ~/bin/ssh-ssm.sh jenkins-dev-master-autoscale01 centos
-Last login: Sun Feb 23 12:39:40 2020 from localhost
-[centos@ip-10-xx-x-x43 ~]$ logout
-Connection to jenkins-dev-master-autoscale01 closed.
-```
-or
-```
-[elpy@testbox ~]$ ~/bin/ssm-tool.py --profile home --tag Name:*slave* --linux
-instance id           |ip                    |agent up-to-date      |platform              |names
-------------------------------------------------------------------------------------------------------------------
-i-0xxxxxxxxxxxxx67a   |10.xx.x.x53           |True                  |CentOS Linux          |jenkins-dev-slave-autoscale01
-
-[elpy@testbox ~]$ AWS_PROFILE=home ~/bin/ssh-ssm.sh i-0xxxxxxxxxxxxx67a centos
-Last login: Sat Feb 22 05:57:15 2020 from localhost
-[centos@ip-10-xx-x-x53 ~]$ logout
-Connection to i-0xxxxxxxxxxxxx67a closed.
-```
-No pre-configuration is required.
-
-Alternatively, we can add each instance to our `~/.ssh/config` so that we can use `ssh` directly. It is not required for you to pre-configure your AWS profile if you're happy to specify it or switch to it each time you use `ssh`.
+Required is adding each instance to our `~/.ssh/config` so that we can use `ssh` directly. Infrastructure as code is here to stay.  It is not required for you to pre-configure your AWS profile if you're happy to specify it or switch to it each time you use `ssh`
 
 Example `~/.ssh/config`:
 ```
