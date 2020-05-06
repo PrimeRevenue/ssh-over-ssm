@@ -16,7 +16,7 @@ if [[ "$(ps -o comm= -p $PPID)" != "ssh" ]]; then
   exit 0
 fi
 
-[[ "$1" =~ ^i-([0-9a-f]{8,})$ ]] && iid="$1" ||iid=$(python3 ~/bin/ssm-tool.py --iid --tag Name:"${1}")
+[[ "$1" =~ ^(i|mi)-([0-9a-f]{8,})$ ]] && iid="$1" || exit 1
 [[ $? -ne 0 ]] && printf "  ERROR: could not determine instance-id with provided argument!\n" && exit 1
 
 function cleanup {
@@ -37,13 +37,8 @@ ssh_pubkey=$(ssh-add -L 2>/dev/null| head -1) || tempkey
 
 aws ssm send-command \
   --instance-ids "$iid" \
-  --document-name 'AWS-RunShellScript' \
-  --parameters commands="\"
-    u=\$(getent passwd ${ssh_user}) && x=\$(echo \$u |cut -d: -f6) || exit 1
-    grep '${ssh_pubkey}' \${x}/${ssh_authkeys} && exit 1
-    printf '${ssh_pubkey}'|tee -a \${x}/${ssh_authkeys} && sleep 15
-    sed -i s,'${ssh_pubkey}',, \${x}/${ssh_authkeys}
-    \"" \
+  --document-name 'SSHSSM' \
+  --parameters "USER=$ssh_user,AUTHKEYS=$ssh_authkeys,PUBKEY=$ssh_pubkey" \
   --comment "temporary ssm ssh access" #--debug
 
 aws ssm start-session --document-name AWS-StartSSHSession --target "$iid" #--debug
