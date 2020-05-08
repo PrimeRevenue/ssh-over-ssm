@@ -30,15 +30,25 @@ function tempkey {
   ssh_pubkey=$(< "${ssh_local}"/ssm-ssh-tmp.pub)
 }
 
+# The user is the second input passed into the proxy command script 
 ssh_user="$2"
-ssh_authkeys='.ssh/authorized_keys'
+
+# Name of the authorized_keys file on the remote host. This is pretty standard.
+ssh_authkeys='authorized_keys'
+
+# Local ssh directory where the temp private key is created and cleaned up
 ssh_local=~/.ssh
+
+# The public key that will be sent to the remote host using the SSM document
 ssh_pubkey=$(ssh-add -L 2>/dev/null| head -1) || tempkey
+
+# The name of the ssh directory on the remote host. This is pretty standard.
+ssh_remote=.ssh
 
 aws ssm send-command \
   --instance-ids "$iid" \
   --document-name 'SSHSSM' \
-  --parameters "USER=$ssh_user,AUTHKEYS=$ssh_authkeys,PUBKEY=$ssh_pubkey" \
+  --parameters "USER=$ssh_user,SSHDIR=$ssh_remote,AUTHKEYS=$ssh_authkeys,PUBKEY=$ssh_pubkey" \
   --comment "temporary ssm ssh access" #--debug
 
 aws ssm start-session --document-name AWS-StartSSHSession --target "$iid" #--debug
