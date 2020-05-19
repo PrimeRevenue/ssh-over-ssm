@@ -26,7 +26,8 @@ function cleanup {
 function tempkey {
   set -o errexit
   trap cleanup EXIT
-  ssh-keygen -t ed25519 -N '' -f "${ssh_local}"/ssm-ssh-tmp -C ssm-ssh-session
+#  ssh-keygen -t ed25519 -N '' -f "${ssh_local}"/ssm-ssh-tmp -C ssm-ssh-session
+  ssh-keygen -t rsa -b 4096 -N '' -f "${ssh_local}"/ssm-ssh-tmp -C ssm-ssh-session
   ssh_pubkey=$(< "${ssh_local}"/ssm-ssh-tmp.pub)
 }
 
