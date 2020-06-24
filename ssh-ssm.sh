@@ -46,6 +46,8 @@ ssh_pubkey=$(ssh-add -L 2>/dev/null| head -1) || tempkey
 # The name of the ssh directory on the remote host. This is pretty standard.
 ssh_remote=.ssh
 
+aws sso login
+
 aws ssm send-command \
   --instance-ids "$iid" \
   --document-name 'SSHSSM' \
